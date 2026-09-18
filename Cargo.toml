@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "dev/api-types",
     "dev/client",
     "dev/enclave",
+    "dev/enclave-types",
     "dev/host",
     "migration/enclave",
     "migration/host",
@@ -18,5 +20,25 @@ repository = "https://github.com/worldcoin/di-migration-tee"
 publish = false
 
 [workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = "0.8"
+bytes = { version = "1", features = ["serde"] }
+di-dev-api-types = { path = "dev/api-types" }
+di-dev-enclave-types = { path = "dev/enclave-types" }
+flate2 = "1.1"
+http-body-util = "0.1"
+pontifex = { version = "2.0.0", default-features = false }
+# Decompression only, and pure Rust — the host image is a musl `scratch` build, so a zstd
+# binding with a C dependency would have to be cross-compiled for nothing we need.
+ruzstd = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+telemetry-batteries = { version = "0.4.1", default-features = false }
+thiserror = "2"
+tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
