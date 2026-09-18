@@ -1,14 +1,14 @@
-# Builds and publishes the host image to GHCR (attested).
+# Builds and publishes the host images to GHCR (attested).
 #
-# The enclave OCI image and EIF are built reproducibly by flake.nix. This workflow only
-# builds and publishes the host.
+# Enclave OCI images and EIFs are built reproducibly by flake.nix. This workflow only builds
+# and publishes host images.
 name: Build and Push Docker Image
 
 on:
   pull_request:
     paths:
-      - "migration/host/**"
-      - "migration/enclave/**"
+      - "migration/**"
+      - "dev/**"
       - "scripts/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -39,6 +39,10 @@ on:
         description: "Version tag to publish (including v prefix)."
         required: false
         type: string
+      workload:
+        description: "Build only this workload's host image. Empty builds all."
+        required: false
+        type: string
       push:
         description: "Push to GHCR. False builds only."
         required: false
@@ -46,7 +50,7 @@ on:
         type: boolean
     outputs:
       digest:
-        description: "Digest of the host image."
+        description: "Digest of the selected workload's host image, when exactly one was built."
         value: ${{ jobs.docker-build.outputs.digest }}
       image:
         description: "Fully-qualified name of that image, so callers need no second copy of the mapping."
@@ -56,12 +60,46 @@ permissions:
   contents: read
 
 jobs:
+  # A static matrix cannot be filtered by an input, and a caller may need one workload at a
+  # time. Cheaper than duplicating the build job per workload.
+  resolve-matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - name: Select workloads
+        id: matrix
+        env:
+          WORKLOAD: ${{ inputs.workload }}
+        run: |
+          set -euo pipefail
+          all='[
+            {"name":"di-migration-host","dockerfile":"migration/host/Dockerfile","image":"di-migration-host","workload":"migration"},
+            {"name":"di-dev-host","dockerfile":"dev/host/Dockerfile","image":"di-dev-host","workload":"dev"}
+          ]'
+          if [[ -n "${WORKLOAD:-}" ]]; then
+            include=$(jq -c --arg w "$WORKLOAD" 'map(select(.workload == $w))' <<<"$all")
+            if [[ "$(jq 'length' <<<"$include")" == "0" ]]; then
+              echo "::error::No host image for workload '$WORKLOAD'." >&2
+              exit 1
+            fi
+          else
+            include=$(jq -c . <<<"$all")
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   docker-build:
-    name: Docker build (di-migration-host)
+    name: Docker build (${{ matrix.name }})
+    needs: resolve-matrix
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}
-      image: ghcr.io/${{ github.repository_owner }}/di-migration-host
+      image: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve-matrix.outputs.include) }}
     permissions:
       contents: read
       id-token: write
@@ -92,7 +130,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/di-migration-host
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || steps.version.outputs.is_stable == 'true' }}
             type=sha
@@ -114,7 +152,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: migration/host/Dockerfile
+          file: ${{ matrix.dockerfile }}
           # Publish on push/tag/dispatch; PRs and dry runs build only (validation).
           push: ${{ github.event_name == 'push' || inputs.push == true }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -128,5 +166,5 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository_owner }}/di-migration-host
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
