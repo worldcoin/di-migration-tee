@@ -63,11 +63,11 @@ jobs:
       - name: Evaluate the enclave image and converter derivations
         run: |
           set -euo pipefail
-          for output in di-enclave di-oci di-eif; do
+          for output in di-migration-enclave di-migration-oci di-migration-eif; do
             drv="$(nix eval --raw --no-update-lock-file ".#packages.x86_64-linux.$output.drvPath")"
             echo "$output -> $drv"
           done
       # Build the OCI image so evaluation-only errors do not slip through. Cheap while the
       # enclave has no private dependencies and no models; revisit if that changes.
       - name: Build the enclave image
-        run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-oci
+        run: nix build --no-link --no-update-lock-file .#packages.x86_64-linux.di-migration-oci

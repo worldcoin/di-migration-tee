@@ -7,8 +7,8 @@ name: Build and Push Docker Image
 on:
   pull_request:
     paths:
-      - "host/**"
-      - "enclave/**"
+      - "migration/host/**"
+      - "migration/enclave/**"
       - "scripts/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -57,11 +57,11 @@ permissions:
 
 jobs:
   docker-build:
-    name: Docker build (di-host)
+    name: Docker build (di-migration-host)
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.build.outputs.digest }}
-      image: ghcr.io/${{ github.repository_owner }}/di-host
+      image: ghcr.io/${{ github.repository_owner }}/di-migration-host
     permissions:
       contents: read
       id-token: write
@@ -92,7 +92,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/di-host
+          images: ghcr.io/${{ github.repository_owner }}/di-migration-host
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || steps.version.outputs.is_stable == 'true' }}
             type=sha
@@ -114,7 +114,7 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: host/Dockerfile
+          file: migration/host/Dockerfile
           # Publish on push/tag/dispatch; PRs and dry runs build only (validation).
           push: ${{ github.event_name == 'push' || inputs.push == true }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -128,5 +128,5 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           push-to-registry: true
-          subject-name: ghcr.io/${{ github.repository_owner }}/di-host
+          subject-name: ghcr.io/${{ github.repository_owner }}/di-migration-host
           subject-digest: ${{ steps.build.outputs.digest }}

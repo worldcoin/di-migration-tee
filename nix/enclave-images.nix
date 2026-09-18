@@ -8,7 +8,7 @@ let
   nitroLib = nitro-util.lib.${system};
   nitroBlobs = nitroLib.blobs.x86_64;
 
-  pname = "di-enclave";
+  pname = "di-migration-enclave";
   version = enclaveBins.${pname}.version;
 
   root = pkgs.buildEnv {
@@ -67,6 +67,6 @@ let
   };
 in
 {
-  di-oci = ociImage;
-  di-eif = eif;
+  di-migration-oci = ociImage;
+  di-migration-eif = eif;
 }

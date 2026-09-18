@@ -13,12 +13,12 @@ let
   version = (builtins.fromTOML (builtins.readFile (root + "/Cargo.toml"))).workspace.package.version;
 in
 {
-  di-enclave = craneLib.buildPackage {
-    pname = "di-enclave";
+  di-migration-enclave = craneLib.buildPackage {
+    pname = "di-migration-enclave";
     inherit version;
     src = root;
     strictDeps = true;
-    cargoExtraArgs = "--locked --bin di-enclave";
+    cargoExtraArgs = "--locked --bin di-migration-enclave";
 
     # LLVM's LICM scalar promotion orders work by pointer value, so rustc (1.97 and 1.98
     # both) emits different code for the same input under different address-space layouts —

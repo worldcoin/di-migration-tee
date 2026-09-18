@@ -12,8 +12,8 @@ set -euo pipefail
 #        (output-dir defaults to target/eif)
 #
 # Outputs in <output-dir>:
-#   di-enclave.eif   the enclave image
-#   di-pcr.json      PCR measurements extracted from the EIF
+#   di-migration-enclave.eif   the enclave image
+#   di-migration-pcr.json      PCR measurements extracted from the EIF
 
 out_dir="target/eif"
 output_dir_provided=false
@@ -65,7 +65,7 @@ out_dir="$(cd "$out_dir" && pwd)"
 # matching `nix flake update` would otherwise be resolved to whatever upstream serves right
 # now, and the lock silently rewritten. The PCRs must follow the committed lock or nothing.
 echo "Building reproducible OCI image..."
-if ! oci_store=$(nix build ".#di-oci" --no-update-lock-file --no-link --print-out-paths); then
+if ! oci_store=$(nix build ".#di-migration-oci" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] OCI image build failed; the error above says why. A 'platform" >&2
   echo "        mismatch' for x86_64-linux means this host needs a remote builder." >&2
@@ -73,21 +73,21 @@ if ! oci_store=$(nix build ".#di-oci" --no-update-lock-file --no-link --print-ou
 fi
 
 echo "Building EIF..."
-if ! eif_store=$(nix build ".#di-eif" --no-update-lock-file --no-link --print-out-paths); then
+if ! eif_store=$(nix build ".#di-migration-eif" --no-update-lock-file --no-link --print-out-paths); then
   echo >&2
   echo "[ERROR] EIF build failed; the error above says why." >&2
   exit 1
 fi
 
-install -m 0644 "$eif_store/image.eif" "$out_dir/di-enclave.eif"
-install -m 0644 "$eif_store/pcr.json" "$out_dir/di-pcr.json"
+install -m 0644 "$eif_store/image.eif" "$out_dir/di-migration-enclave.eif"
+install -m 0644 "$eif_store/pcr.json" "$out_dir/di-migration-pcr.json"
 
 echo "Validating measurements..."
 # Registering a missing or malformed PCR with a client would weaken verification.
 for pcr in PCR0 PCR1 PCR2; do
-  value="$(jq -r --arg k "$pcr" '.[$k] // ""' "$out_dir/di-pcr.json")"
+  value="$(jq -r --arg k "$pcr" '.[$k] // ""' "$out_dir/di-migration-pcr.json")"
   if [[ ! "$value" =~ ^[0-9a-f]{96}$ ]]; then
-    echo "[ERROR] di-pcr.json holds no usable $pcr (got '$value')." >&2
+    echo "[ERROR] di-migration-pcr.json holds no usable $pcr (got '$value')." >&2
     echo "        eif_build's output format may have changed; do not register these." >&2
     exit 1
   fi
@@ -95,6 +95,6 @@ done
 
 echo
 echo "OCI image:    $oci_store"
-echo "EIF:          $out_dir/di-enclave.eif"
-echo "Measurements: $out_dir/di-pcr.json"
-jq . "$out_dir/di-pcr.json"
+echo "EIF:          $out_dir/di-migration-enclave.eif"
+echo "Measurements: $out_dir/di-migration-pcr.json"
+jq . "$out_dir/di-migration-pcr.json"
