@@ -1,0 +1,11 @@
+# Build artifacts and VCS metadata — never needed in the image build context.
+target/
+**/target/
+build/
+.git/
+.github/
+
+# Local editor / OS cruft.
+.vscode/
+.idea/
+.DS_Store

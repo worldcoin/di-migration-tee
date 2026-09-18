@@ -1,0 +1,188 @@
+name: release enclave
+
+on:
+  push:
+    tags: ["enclave/v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to build."
+        required: true
+        type: string
+      version:
+        description: "Release version, without the v prefix."
+        required: true
+        type: string
+      dry_run:
+        description: "Build without publishing."
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: release-enclave-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - id: release
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            version="${GITHUB_REF_NAME#enclave/v}"
+            tag="$GITHUB_REF_NAME"
+            publish=true
+          else
+            version="$INPUT_VERSION"
+            tag="enclave/v$version"
+            publish=$([[ "$DRY_RUN" == "true" ]] && echo false || echo true)
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "sha=$(git rev-parse HEAD)"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      PCR0: ${{ steps.outputs.outputs.PCR0 }}
+      PCR1: ${{ steps.outputs.outputs.PCR1 }}
+      PCR2: ${{ steps.outputs.outputs.PCR2 }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - run: scripts/build-enclave.sh target/release
+      - name: Package OCI layout
+        run: |
+          set -euo pipefail
+          oci_store=$(nix build --no-link --no-update-lock-file --print-out-paths ".#di-oci")
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+            --mode='u+rwX,go+rX' \
+            -C "$oci_store" -czf "target/release/di-oci.tar.gz" .
+      - name: Build manifest
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg version "$VERSION" --arg gitSha "$RELEASE_SHA" \
+            --arg eifSha256 "$(sha256sum target/release/di-enclave.eif | cut -d' ' -f1)" \
+            --arg ociArchiveSha256 "$(sha256sum target/release/di-oci.tar.gz | cut -d' ' -f1)" \
+            --argjson measurements "$(cat target/release/di-pcr.json)" \
+            '{version: $version, gitSha: $gitSha,
+              artifacts: {eifSha256: $eifSha256, ociArchiveSha256: $ociArchiveSha256},
+              measurements: $measurements}' \
+            > target/release/manifest.json
+      - id: outputs
+        run: |
+          jq -r '"PCR0=0x\(.PCR0)", "PCR1=0x\(.PCR1)", "PCR2=0x\(.PCR2)"' \
+            target/release/di-pcr.json >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: enclave-release
+          path: |
+            target/release/di-enclave.eif
+            target/release/di-oci.tar.gz
+            target/release/di-pcr.json
+            target/release/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: enclave-release
+          path: assets
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Publish OCI image
+        id: oci
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="$REGISTRY/$OWNER/di-enclave"
+          nixpkgs_rev=$(jq -r '.nodes.nixpkgs.locked.rev' flake.lock)
+          skopeo="github:NixOS/nixpkgs/$nixpkgs_rev#skopeo"
+          nix run --no-update-lock-file "$skopeo" -- --insecure-policy copy \
+            "oci-archive:assets/di-oci.tar.gz" "docker://$repo:v$VERSION" \
+            --dest-creds "$GHCR_USER:$GHCR_TOKEN"
+          digest=$(nix run --no-update-lock-file "$skopeo" -- --insecure-policy inspect \
+            "docker://$repo:v$VERSION" --creds "$GHCR_USER:$GHCR_TOKEN" | jq -r .Digest)
+          echo "ref=$repo@$digest" >> "$GITHUB_OUTPUT"
+      - name: Add OCI reference to manifest
+        env:
+          OCI_REF: ${{ steps.oci.outputs.ref }}
+        run: |
+          set -euo pipefail
+          jq --arg ref "$OCI_REF" '.artifacts.enclaveOci = $ref' assets/manifest.json \
+            > "$RUNNER_TEMP/manifest.json"
+          mv "$RUNNER_TEMP/manifest.json" assets/manifest.json
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/*
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          PCR0: ${{ needs.build.outputs.PCR0 }}
+          PCR1: ${{ needs.build.outputs.PCR1 }}
+          PCR2: ${{ needs.build.outputs.PCR2 }}
+          OCI_REF: ${{ steps.oci.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/body.md" <<EOF
+          ## Measurements
+
+          | PCR | Value |
+          |:---|:---|
+          | PCR0 | \`$PCR0\` |
+          | PCR1 | \`$PCR1\` |
+          | PCR2 | \`$PCR2\` |
+
+          OCI image: \`$OCI_REF\`
+          EOF
+          gh release create --draft --target "$RELEASE_SHA" -t "$TAG" \
+            -F "$RUNNER_TEMP/body.md" "$TAG" assets/*
