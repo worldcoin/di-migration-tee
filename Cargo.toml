@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "dev/client",
+    "dev/enclave",
+    "dev/host",
     "migration/enclave",
     "migration/host",
 ]
