@@ -1,0 +1,57 @@
+use std::sync::Arc;
+
+use di_dev_enclave_types::{self as enclave_types, MigrateRequest, MigrateResponse};
+
+use crate::state::EnclaveState;
+
+/// Echoes the PCP back, standing in for the sandboxed pipeline until it lands.
+pub async fn handler(
+    _: Arc<EnclaveState>,
+    request: MigrateRequest,
+) -> Result<MigrateResponse, enclave_types::Error> {
+    let bytes = request.pcp.len();
+
+    if bytes == 0 {
+        tracing::warn!("migrate request carried no PCP");
+        return Err(enclave_types::Error::EmptyPcp);
+    }
+
+    tracing::info!(bytes, "echoing PCP");
+    Ok(MigrateResponse {
+        pcp: request.pcp.to_vec(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use di_dev_enclave_types::{self as enclave_types, MigrateRequest};
+
+    use super::handler;
+    use crate::state::EnclaveState;
+
+    fn request(bytes: usize) -> MigrateRequest {
+        MigrateRequest {
+            pcp: vec![7u8; bytes].into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pcp_comes_back_unchanged() {
+        let state = Arc::new(EnclaveState);
+
+        let response = handler(state, request(32)).await.expect("should echo");
+
+        assert_eq!(response.pcp, vec![7u8; 32]);
+    }
+
+    #[tokio::test]
+    async fn an_empty_pcp_is_rejected() {
+        let state = Arc::new(EnclaveState);
+
+        let error = handler(state, request(0)).await.expect_err("should reject");
+
+        assert_eq!(error, enclave_types::Error::EmptyPcp);
+    }
+}
