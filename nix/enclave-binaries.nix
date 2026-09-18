@@ -4,29 +4,33 @@
   crane,
 }:
 let
-  # The same rust-toolchain.toml cargo already uses, so a channel bump moves the enclave
-  # and the host together instead of drifting. rust-overlay carries the component hashes,
+  # The same rust-toolchain.toml cargo already uses, so a channel bump moves the enclaves
+  # and the hosts together instead of drifting. rust-overlay carries the component hashes,
   # so there is no hash to paste in here and none to go stale.
   rustToolchain = pkgs.rust-bin.fromRustupToolchainFile (root + "/rust-toolchain.toml");
   craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
   version = (builtins.fromTOML (builtins.readFile (root + "/Cargo.toml"))).workspace.package.version;
+
+  buildEnclaveBin =
+    { pname }:
+    craneLib.buildPackage {
+      inherit pname version;
+      src = root;
+      strictDeps = true;
+      cargoExtraArgs = "--locked --bin ${pname}";
+
+      # LLVM's LICM scalar promotion orders work by pointer value, so rustc (1.97 and 1.98
+      # both) emits different code for the same input under different address-space layouts —
+      # the same commit measured different PCRs on different machines. Nix disables ASLR in
+      # builds, which hides it locally: each machine is self-consistent and machines disagree.
+      # Disabling the promotion makes codegen address-independent, verified by building the
+      # enclave under ASLR and varied stack rlimits and getting identical bytes. The cost is
+      # one loop optimization. Do not drop this without re-running that experiment.
+      RUSTFLAGS = "-C llvm-args=-disable-licm-promotion";
+    };
 in
 {
-  di-enclave = craneLib.buildPackage {
-    pname = "di-enclave";
-    inherit version;
-    src = root;
-    strictDeps = true;
-    cargoExtraArgs = "--locked --bin di-enclave";
-
-    # LLVM's LICM scalar promotion orders work by pointer value, so rustc (1.97 and 1.98
-    # both) emits different code for the same input under different address-space layouts —
-    # the same commit measured different PCRs on different machines. Nix disables ASLR in
-    # builds, which hides it locally: each machine is self-consistent and machines disagree.
-    # Disabling the promotion makes codegen address-independent, verified by building the
-    # enclave under ASLR and varied stack rlimits and getting identical bytes. The cost is
-    # one loop optimization. Do not drop this without re-running that experiment.
-    RUSTFLAGS = "-C llvm-args=-disable-licm-promotion";
-  };
+  di-migration-enclave = buildEnclaveBin { pname = "di-migration-enclave"; };
+  di-dev-enclave = buildEnclaveBin { pname = "di-dev-enclave"; };
 }

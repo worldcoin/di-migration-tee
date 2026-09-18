@@ -1,7 +1,10 @@
 [workspace]
 members = [
-    "enclave",
-    "host",
+    "dev/client",
+    "dev/enclave",
+    "dev/host",
+    "migration/enclave",
+    "migration/host",
 ]
 resolver = "3"
 

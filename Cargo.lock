@@ -18,7 +18,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "di-enclave"
+name = "di-dev-cli"
 version = "0.1.0"
 dependencies = [
  "tracing",
@@ -26,7 +26,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "di-host"
+name = "di-dev-enclave"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "di-dev-host"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "di-migration-enclave"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "di-migration-host"
 version = "0.1.0"
 dependencies = [
  "tracing",

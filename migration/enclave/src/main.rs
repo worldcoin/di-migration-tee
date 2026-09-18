@@ -1,6 +1,4 @@
-//! Migration API and enclave relay for the `DeepIdentifier` migration — the untrusted side.
-//!
-//! Skeleton. The routes it replaces are §6 of the spec.
+//! Nitro enclave workload for the `DeepIdentifier` migration.
 
 #![deny(
     clippy::all,
@@ -19,7 +17,7 @@ fn main() -> ExitCode {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    // Non-zero rather than binding a port: a skeleton that answers /healthz reads as green.
-    tracing::error!("di-host is a skeleton and serves no routes yet");
+    // Non-zero rather than idling: a skeleton that stays up reads as healthy.
+    tracing::error!("di-migration-enclave is a skeleton and has no boot sequence yet");
     ExitCode::FAILURE
 }
