@@ -1,26 +1,21 @@
-//! Host for the dev migration setup — the untrusted side.
-//!
-//! Skeleton. The routes it replaces drive one migration at a time against S3, with no
-//! queue, no encryption and no attestation verification.
+use std::sync::Arc;
 
-#![deny(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    missing_docs,
-    dead_code
-)]
+use di_dev_host::{AppState, Environment, enclave::PontifexEnclaveClient};
 
-use std::process::ExitCode;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Keep the guard alive until the server stops so buffered spans are flushed.
+    let _telemetry = telemetry_batteries::init()
+        .map_err(|error| anyhow::anyhow!("failed to initialize telemetry: {error:?}"))?;
 
-use tracing_subscriber::EnvFilter;
+    let environment = Environment::from_env();
+    tracing::info!(?environment, "Starting API");
 
-fn main() -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let enclave_client = Arc::new(PontifexEnclaveClient::new(
+        environment.enclave_cid(),
+        environment.enclave_port(),
+    ));
+    let state = AppState::new(environment, enclave_client);
 
-    // Non-zero rather than binding a port: a skeleton that answers /healthz reads as green.
-    tracing::error!("di-dev-host is a skeleton and serves no routes yet");
-    ExitCode::FAILURE
+    di_dev_host::server::start(state).await
 }
