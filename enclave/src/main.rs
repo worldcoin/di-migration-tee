@@ -1,6 +1,4 @@
-//! Nitro enclave workload for the `DeepIdentifier` migration — the trusted side.
-//!
-//! Skeleton. The boot sequence it replaces is §7.1 of the spec.
+//! Nitro enclave workload for the `DeepIdentifier` migration.
 
 #![deny(
     clippy::all,
