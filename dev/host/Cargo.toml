@@ -11,5 +11,17 @@ name = "di-dev-host"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+di-dev-api-types.workspace = true
+di-dev-enclave-types.workspace = true
+pontifex = { workspace = true, features = ["client"] }
+telemetry-batteries = { workspace = true, features = ["axum"] }
+tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true
