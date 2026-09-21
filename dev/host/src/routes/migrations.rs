@@ -156,7 +156,9 @@ mod tests {
         body::Body,
         http::{Request, StatusCode, header},
     };
-    use di_dev_api_types::{MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE, MigrationAccepted};
+    use di_dev_api_types::{
+        ErrorEnvelope, MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE, MigrationAccepted,
+    };
     use http_body_util::BodyExt;
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -336,15 +338,21 @@ mod tests {
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     }
 
-    /// Runs against the real ceiling, not a test-only one. Zeros compress hard enough that the
-    /// payload still clears the request-body limit, so decompression is what stops it.
+    /// The body limit and the decompression ceiling are the same number, and both answer 413,
+    /// so the code is what proves decompression rejected this rather than the body limit.
     #[tokio::test]
-    async fn a_compression_bomb_is_rejected() {
+    async fn a_compression_bomb_is_rejected_by_the_decompression_ceiling() {
         let state = state_with(Arc::new(EchoEnclave));
         let bomb = gzip(&vec![0u8; MAX_PCP_BYTES + 1]);
+        assert!(
+            bomb.len() < MAX_PCP_BYTES,
+            "the bomb must clear the body limit"
+        );
 
-        let (status, _) = send(&state, submission(bomb)).await;
+        let (status, body) = send(&state, submission(bomb)).await;
 
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        let envelope: ErrorEnvelope = serde_json::from_slice(&body).expect("error envelope");
+        assert_eq!(envelope.error.code, "pcp_too_large");
     }
 }

@@ -4,11 +4,12 @@ use uuid::Uuid;
 /// Media type for the compressed PCP sent in, and the migrated PCP that comes back.
 pub const MIGRATION_CONTENT_TYPE: &str = "application/octet-stream";
 
-/// Maximum compressed request body.
-pub const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
-
-/// Maximum PCP after decompression; the host stops a compression bomb here.
-pub const MAX_PCP_BYTES: usize = 64 * 1024 * 1024;
+/// The largest PCP the host accepts, compressed or decompressed.
+///
+/// Bounds the request body and the decompression ceiling alike: one is what arrives, the other
+/// what gets allocated, and gzip can expand ~1000:1 between them. Not derived from a measured
+/// PCP — pick a real number once `iris.tar` + `face.tar` sizes are known.
+pub const MAX_PCP_BYTES: usize = 32 * 1024 * 1024;
 
 /// `POST /v1/migrations` response; poll for the result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
