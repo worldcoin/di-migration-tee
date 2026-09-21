@@ -19,7 +19,6 @@ di-dev-api-types.workspace = true
 di-dev-enclave-types.workspace = true
 flate2.workspace = true
 pontifex = { workspace = true, features = ["client"] }
-ruzstd.workspace = true
 telemetry-batteries = { workspace = true, features = ["axum"] }
 thiserror.workspace = true
 tokio.workspace = true
@@ -28,5 +27,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
-tokio = { workspace = true, features = ["test-util"] }
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "test-util"] }
 tower.workspace = true

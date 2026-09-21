@@ -1,22 +1,13 @@
-//! Bounded decompression of the inline PCP; the format is sniffed, not declared.
+//! Bounded decompression of the inline PCP.
 
 use std::io::Read;
-
-/// Compression formats the host accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Format {
-    /// RFC 1952 gzip.
-    Gzip,
-    /// RFC 8878 zstandard.
-    Zstd,
-}
 
 /// Failures decompressing a request payload.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// The payload began with neither the gzip nor the zstd magic bytes.
-    #[error("payload is neither gzip nor zstd")]
-    UnknownFormat,
+    /// The payload did not start with the gzip magic bytes.
+    #[error("payload is not gzip")]
+    NotGzip,
     /// The payload expanded past the ceiling.
     #[error("PCP expanded past the {limit} byte limit")]
     TooLarge {
@@ -24,54 +15,31 @@ pub enum Error {
         limit: usize,
     },
     /// The stream was truncated or malformed.
-    #[error("{0} stream is corrupt: {1}")]
-    Corrupt(&'static str, String),
+    #[error("gzip stream is corrupt: {0}")]
+    Corrupt(String),
 }
 
+/// Checked before decoding so a non-gzip body is a clear rejection, not an inflate error.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
-const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
-
-/// Identifies the compression format from the payload's leading bytes.
-#[must_use]
-pub fn detect(payload: &[u8]) -> Option<Format> {
-    if payload.starts_with(&GZIP_MAGIC) {
-        Some(Format::Gzip)
-    } else if payload.starts_with(&ZSTD_MAGIC) {
-        Some(Format::Zstd)
-    } else {
-        None
-    }
-}
 
 /// Decompresses `payload`, refusing to hold more than `limit` bytes. CPU-bound; call it off
 /// the async runtime.
 ///
 /// # Errors
 ///
-/// Unrecognized format, expansion past `limit`, or a stream that does not decode.
+/// A payload that is not gzip, expands past `limit`, or does not decode.
 pub fn decompress(payload: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
-    let format = detect(payload).ok_or(Error::UnknownFormat)?;
+    if !payload.starts_with(&GZIP_MAGIC) {
+        return Err(Error::NotGzip);
+    }
 
-    let reader: Box<dyn Read> = match format {
-        Format::Gzip => Box::new(flate2::read::GzDecoder::new(payload)),
-        Format::Zstd => Box::new(
-            ruzstd::decoding::StreamingDecoder::new(payload)
-                .map_err(|error| Error::Corrupt("zstd", error.to_string()))?,
-        ),
-    };
-
-    // One byte past the limit: the decoder's claimed output size is attacker-controlled.
+    // One byte past the limit, so an over-large payload is caught without buffering it. The
+    // size the stream claims to expand to is never consulted.
     let mut pcp = Vec::new();
-    reader
+    flate2::read::GzDecoder::new(payload)
         .take(limit as u64 + 1)
         .read_to_end(&mut pcp)
-        .map_err(|error| {
-            let name = match format {
-                Format::Gzip => "gzip",
-                Format::Zstd => "zstd",
-            };
-            Error::Corrupt(name, error.to_string())
-        })?;
+        .map_err(|error| Error::Corrupt(error.to_string()))?;
 
     if pcp.len() > limit {
         return Err(Error::TooLarge { limit });
@@ -84,7 +52,7 @@ pub fn decompress(payload: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
 mod tests {
     use std::io::Write;
 
-    use super::{Error, Format, decompress, detect};
+    use super::{Error, decompress};
 
     fn gzip(payload: &[u8]) -> Vec<u8> {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -93,22 +61,20 @@ mod tests {
     }
 
     #[test]
-    fn gzip_is_detected_and_round_trips() {
+    fn a_gzip_payload_round_trips() {
         let payload = b"a perfectly ordinary pcp".to_vec();
-        let compressed = gzip(&payload);
 
-        assert_eq!(detect(&compressed), Some(Format::Gzip));
         assert_eq!(
-            decompress(&compressed, 1024).expect("should decode"),
+            decompress(&gzip(&payload), 1024).expect("should decode"),
             payload
         );
     }
 
     #[test]
-    fn a_payload_in_no_known_format_is_rejected() {
+    fn a_payload_that_is_not_gzip_is_rejected() {
         let error = decompress(b"not compressed at all", 1024).expect_err("should reject");
 
-        assert!(matches!(error, Error::UnknownFormat));
+        assert!(matches!(error, Error::NotGzip));
     }
 
     /// The property that matters: a bomb stops at the limit instead of being allocated.
@@ -125,10 +91,9 @@ mod tests {
     #[test]
     fn a_payload_exactly_at_the_limit_is_accepted() {
         let payload = vec![3u8; 1024];
-        let compressed = gzip(&payload);
 
         assert_eq!(
-            decompress(&compressed, 1024).expect("should decode"),
+            decompress(&gzip(&payload), 1024).expect("should decode"),
             payload
         );
     }
@@ -136,10 +101,9 @@ mod tests {
     #[test]
     fn a_truncated_stream_is_rejected() {
         let compressed = gzip(b"a perfectly ordinary pcp");
-        let truncated = &compressed[..compressed.len() / 2];
 
-        let error = decompress(truncated, 1024).expect_err("should reject");
+        let error = decompress(&compressed[..compressed.len() / 2], 1024).expect_err("reject");
 
-        assert!(matches!(error, Error::Corrupt("gzip", _)));
+        assert!(matches!(error, Error::Corrupt(_)));
     }
 }
