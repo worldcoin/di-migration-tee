@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use di_dev_enclave::{server, state::EnclaveState};
+use di_dev_enclave_types::PONTIFEX_PORT;
 use tracing_subscriber::EnvFilter;
-
-/// vsock port the host dials; fixed because both sides ship together.
-const PONTIFEX_PORT: u32 = 1000;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

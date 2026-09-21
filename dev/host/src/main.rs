@@ -1,26 +1,35 @@
-//! Host for the dev migration setup — the untrusted side.
-//!
-//! Skeleton. The routes it replaces drive one migration at a time against S3, with no
-//! queue, no encryption and no attestation verification.
+use std::sync::Arc;
 
-#![deny(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    missing_docs,
-    dead_code
-)]
+use di_dev_enclave_types::PONTIFEX_PORT;
+use di_dev_host::{AppState, enclave::PontifexEnclaveClient};
 
-use std::process::ExitCode;
+/// The enclave's CID, which `nitro-cli` assigns at boot, so it cannot be a constant.
+///
+/// # Panics
+///
+/// Panics when `ENCLAVE_CID` is unset or does not parse; a host that cannot reach its enclave
+/// must not start.
+fn enclave_cid() -> u32 {
+    std::env::var("ENCLAVE_CID")
+        .expect("ENCLAVE_CID environment variable is not set")
+        .parse()
+        .expect("ENCLAVE_CID environment variable is not a valid u32")
+}
 
-use tracing_subscriber::EnvFilter;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Keep the guard alive until the server stops so buffered spans are flushed.
+    let _telemetry = telemetry_batteries::init()
+        .map_err(|error| anyhow::anyhow!("failed to initialize telemetry: {error:?}"))?;
 
-fn main() -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let cid = enclave_cid();
+    tracing::info!(
+        enclave_cid = cid,
+        enclave_port = PONTIFEX_PORT,
+        "Starting API"
+    );
 
-    // Non-zero rather than binding a port: a skeleton that answers /healthz reads as green.
-    tracing::error!("di-dev-host is a skeleton and serves no routes yet");
-    ExitCode::FAILURE
+    let enclave_client = Arc::new(PontifexEnclaveClient::new(cid, PONTIFEX_PORT));
+
+    di_dev_host::server::start(AppState::new(enclave_client)).await
 }
