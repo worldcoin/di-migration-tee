@@ -1,4 +1,5 @@
-//! HTTP host for the dev migration setup: configuration, the enclave client and the probes.
+//! HTTP host for the dev migration setup: the enclave client, the probes, and the two
+//! mechanisms a migration needs.
 
 #![deny(
     clippy::all,
@@ -12,7 +13,9 @@ mod app_state;
 #[cfg(test)]
 mod test_support;
 
+pub mod compression;
 pub mod enclave;
+pub mod migrations;
 pub mod routes;
 pub mod server;
 
