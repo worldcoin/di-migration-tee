@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use di_dev_enclave_types::{MigrateRequest, MigrateResponse};
 
 use crate::{
-    AppState, Environment,
+    AppState,
     enclave::{EnclaveClient, Error},
 };
 
@@ -40,10 +40,7 @@ impl EnclaveClient for FailingEnclave {
     }
 }
 
-/// Builds state around `client` without touching the process environment.
+/// Builds state around `client`.
 pub fn state_with(client: Arc<dyn EnclaveClient>) -> AppState {
-    AppState::new(
-        Environment::for_tests(1, 1000, 1024 * 1024, 1024 * 1024),
-        client,
-    )
+    AppState::new(client)
 }

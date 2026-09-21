@@ -9,7 +9,6 @@
 )]
 
 mod app_state;
-mod environment;
 #[cfg(test)]
 mod test_support;
 
@@ -18,4 +17,3 @@ pub mod routes;
 pub mod server;
 
 pub use app_state::AppState;
-pub use environment::Environment;

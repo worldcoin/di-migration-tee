@@ -1,6 +1,20 @@
 use std::sync::Arc;
 
-use di_dev_host::{AppState, Environment, enclave::PontifexEnclaveClient};
+use di_dev_enclave_types::PONTIFEX_PORT;
+use di_dev_host::{AppState, enclave::PontifexEnclaveClient};
+
+/// The enclave's CID, which `nitro-cli` assigns at boot, so it cannot be a constant.
+///
+/// # Panics
+///
+/// Panics when `ENCLAVE_CID` is unset or does not parse; a host that cannot reach its enclave
+/// must not start.
+fn enclave_cid() -> u32 {
+    std::env::var("ENCLAVE_CID")
+        .expect("ENCLAVE_CID environment variable is not set")
+        .parse()
+        .expect("ENCLAVE_CID environment variable is not a valid u32")
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -8,14 +22,14 @@ async fn main() -> anyhow::Result<()> {
     let _telemetry = telemetry_batteries::init()
         .map_err(|error| anyhow::anyhow!("failed to initialize telemetry: {error:?}"))?;
 
-    let environment = Environment::from_env();
-    tracing::info!(?environment, "Starting API");
+    let cid = enclave_cid();
+    tracing::info!(
+        enclave_cid = cid,
+        enclave_port = PONTIFEX_PORT,
+        "Starting API"
+    );
 
-    let enclave_client = Arc::new(PontifexEnclaveClient::new(
-        environment.enclave_cid(),
-        environment.enclave_port(),
-    ));
-    let state = AppState::new(environment, enclave_client);
+    let enclave_client = Arc::new(PontifexEnclaveClient::new(cid, PONTIFEX_PORT));
 
-    di_dev_host::server::start(state).await
+    di_dev_host::server::start(AppState::new(enclave_client)).await
 }

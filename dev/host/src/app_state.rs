@@ -1,28 +1,18 @@
 use std::sync::Arc;
 
-use crate::{Environment, enclave::EnclaveClient};
+use crate::enclave::EnclaveClient;
 
 /// Dependencies shared by API request handlers.
 #[derive(Clone)]
 pub struct AppState {
-    environment: Environment,
     enclave_client: Arc<dyn EnclaveClient>,
 }
 
 impl AppState {
-    /// Creates API state from the runtime environment and enclave client.
+    /// Creates API state from the enclave client.
     #[must_use]
-    pub fn new(environment: Environment, enclave_client: Arc<dyn EnclaveClient>) -> Self {
-        Self {
-            environment,
-            enclave_client,
-        }
-    }
-
-    /// Returns the runtime environment.
-    #[must_use]
-    pub const fn environment(&self) -> Environment {
-        self.environment
+    pub fn new(enclave_client: Arc<dyn EnclaveClient>) -> Self {
+        Self { enclave_client }
     }
 
     /// Returns a shared enclave client.

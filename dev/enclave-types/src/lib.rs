@@ -13,6 +13,9 @@ mod error;
 mod health;
 mod migrate;
 
+/// vsock port the enclave serves and the host dials; both sides ship together.
+pub const PONTIFEX_PORT: u32 = 1000;
+
 pub use error::Error;
 pub use health::HealthRequest;
 pub use migrate::{MigrateRequest, MigrateResponse};
