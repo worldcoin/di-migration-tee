@@ -1,26 +1,25 @@
-//! Nitro enclave workload for the dev migration setup.
-//!
-//! Skeleton. It will run the biometrics pipeline under a minijail sandbox, fed a tarball
-//! the host injects over vsock.
+use std::sync::Arc;
 
-#![deny(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    missing_docs,
-    dead_code
-)]
-
-use std::process::ExitCode;
-
+use di_dev_enclave::{server, state::EnclaveState};
 use tracing_subscriber::EnvFilter;
 
-fn main() -> ExitCode {
+/// vsock port the host dials; fixed because both sides ship together.
+const PONTIFEX_PORT: u32 = 1000;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    // Non-zero rather than idling: a skeleton that stays up reads as healthy.
-    tracing::error!("di-dev-enclave is a skeleton and has no boot sequence yet");
-    ExitCode::FAILURE
+    let state = Arc::new(EnclaveState);
+
+    tracing::info!(port = PONTIFEX_PORT, "starting enclave Pontifex server");
+
+    // Err exits non-zero so the carrier restarts the enclave rather than idling without a server.
+    server::start(state, PONTIFEX_PORT)
+        .await
+        .inspect_err(|error| {
+            tracing::error!(%error, "enclave Pontifex server stopped");
+        })
 }
