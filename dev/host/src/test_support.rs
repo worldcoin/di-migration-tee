@@ -41,19 +41,28 @@ impl EnclaveClient for FailingEnclave {
     }
 }
 
-/// Holds every migration open until released, so a test can observe one in flight.
+/// Holds a migration inside the enclave until released, so a test can have one in flight.
+///
+/// Both handles use `notify_one`, not `notify_waiters`: neither side is guaranteed to be
+/// waiting yet, and only `notify_one` stores a permit for a wake that arrives first.
 pub struct GatedEnclave {
-    gate: Arc<Notify>,
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
 }
 
 impl GatedEnclave {
-    pub fn new() -> (Self, Arc<Notify>) {
-        let gate = Arc::new(Notify::new());
+    /// Returns the fake, a handle that fires once a migration has reached the enclave, and the
+    /// handle that lets it finish.
+    pub fn new() -> (Self, Arc<Notify>, Arc<Notify>) {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
         (
             Self {
-                gate: Arc::clone(&gate),
+                entered: Arc::clone(&entered),
+                release: Arc::clone(&release),
             },
-            gate,
+            entered,
+            release,
         )
     }
 }
@@ -65,7 +74,8 @@ impl EnclaveClient for GatedEnclave {
     }
 
     async fn migrate(&self, request: MigrateRequest) -> Result<MigrateResponse, Error> {
-        self.gate.notified().await;
+        self.entered.notify_one();
+        self.release.notified().await;
         Ok(MigrateResponse {
             pcp: request.pcp.to_vec(),
         })

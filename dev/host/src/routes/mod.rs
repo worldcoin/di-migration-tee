@@ -21,7 +21,6 @@ pub fn handler(max_request_bytes: usize) -> Router<AppState> {
             "/v1/migrations",
             post(migrations::submit).layer(DefaultBodyLimit::max(max_request_bytes)),
         )
-        .route("/v1/migrations/{id}", get(migrations::collect))
 }
 
 #[cfg(test)]

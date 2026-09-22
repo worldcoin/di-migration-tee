@@ -1,22 +1,16 @@
 use axum::{
-    Json,
     body::Bytes,
-    extract::{Path, State, rejection::BytesRejection},
+    extract::{State, rejection::BytesRejection},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use di_dev_api_types::{MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE, MigrationAccepted};
+use di_dev_api_types::{MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE};
 use di_dev_enclave_types::MigrateRequest;
-use uuid::Uuid;
 
-use crate::{
-    AppState, compression,
-    error::ApiError,
-    migrations::{Failure, State as MigrationState},
-};
+use crate::{AppState, compression, error::ApiError};
 
-/// Accepts a compressed PCP and starts a migration. Decompression happens here, not in the
-/// task, so a malformed payload is a straight rejection.
+/// Migrates one PCP and returns it. Runs to completion before answering; the enclave deadline
+/// in `enclave.rs` is what bounds how long a client waits.
 pub async fn submit(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -65,8 +59,10 @@ pub async fn submit(
 
     let pcp = compression::decompress(&body, MAX_PCP_BYTES).map_err(|e| ApiError::payload(&e))?;
 
-    // Claimed after decompression so a bad payload never occupies the slot.
-    let Some(slot) = state.migrations().start() else {
+    // Acquired after decompression so a malformed payload never holds the slot. The permit
+    // drops with the handler, however it returns.
+    let migration = state.migration();
+    let Ok(_permit) = migration.try_acquire() else {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "migration_in_progress",
@@ -75,81 +71,43 @@ pub async fn submit(
         ));
     };
 
-    let id = slot.id();
-    let enclave_client = state.enclave_client();
     let bytes = pcp.len();
+    tracing::info!(bytes, "migration started");
 
-    // The slot guard rides along, so the slot is released however this task ends.
-    tokio::spawn(async move {
-        match enclave_client
-            .migrate(MigrateRequest { pcp: pcp.into() })
-            .await
-        {
-            Ok(response) => {
-                tracing::info!(migration_id = %id, bytes = response.pcp.len(), "migration finished");
-                slot.succeed(response.pcp.into());
-            }
-            Err(error) => {
-                let failure = Failure::from(&error);
-                tracing::error!(
-                    migration_id = %id,
-                    ?failure,
-                    dependency = "enclave",
-                    "migration failed"
-                );
-                slot.fail(failure);
-            }
-        }
-    });
+    let migrated = state
+        .enclave_client()
+        .migrate(MigrateRequest { pcp: pcp.into() })
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, dependency = "enclave", "migration failed");
+            ApiError::enclave(&error)
+        })?
+        .pcp;
 
-    tracing::info!(migration_id = %id, bytes, "migration started");
+    tracing::info!(bytes = migrated.len(), "migration finished");
 
-    Ok((StatusCode::ACCEPTED, Json(MigrationAccepted { id })).into_response())
-}
-
-/// Collects a migration's result.
-pub async fn collect(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Response, ApiError> {
-    let Some(migration) = state.migrations().state(id) else {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND,
-            "unknown_migration",
-            "No such migration; it never started or its result has aged out",
-            false,
-        ));
-    };
-
-    match migration {
-        MigrationState::Running => Ok(StatusCode::ACCEPTED.into_response()),
-        MigrationState::Succeeded(pcp) => Ok((
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, MIGRATION_CONTENT_TYPE),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            pcp,
-        )
-            .into_response()),
-        MigrationState::Failed(failure) => Err(ApiError::migration_failure(&failure)),
-    }
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, MIGRATION_CONTENT_TYPE),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        migrated,
+    )
+        .into_response())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::sync::Arc;
 
     use axum::{
         body::Body,
         http::{Request, StatusCode, header},
     };
-    use di_dev_api_types::{
-        ErrorEnvelope, MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE, MigrationAccepted,
-    };
+    use di_dev_api_types::{ErrorEnvelope, MAX_PCP_BYTES, MIGRATION_CONTENT_TYPE};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
-    use uuid::Uuid;
 
     use crate::{
         AppState, enclave, routes,
@@ -167,7 +125,7 @@ mod tests {
     }
 
     async fn send(state: &AppState, request: Request<Body>) -> (StatusCode, bytes::Bytes) {
-        let response = routes::handler(1024 * 1024)
+        let response = routes::handler(MAX_PCP_BYTES)
             .with_state(state.clone())
             .oneshot(request)
             .await
@@ -191,83 +149,47 @@ mod tests {
             .expect("request should build")
     }
 
-    fn collection(id: Uuid) -> Request<Body> {
-        Request::builder()
-            .method("GET")
-            .uri(format!("/v1/migrations/{id}"))
-            .body(Body::empty())
-            .expect("request should build")
-    }
-
-    async fn submit_ok(state: &AppState, body: Vec<u8>) -> Uuid {
-        let (status, body) = send(state, submission(body)).await;
-
-        assert_eq!(status, StatusCode::ACCEPTED);
-        serde_json::from_slice::<MigrationAccepted>(&body)
-            .expect("should be an acceptance")
-            .id
-    }
-
-    /// Polls rather than sleeping, so the test does not depend on task scheduling.
-    async fn settle(state: &AppState, id: Uuid) -> (StatusCode, bytes::Bytes) {
-        for _ in 0..500 {
-            let (status, body) = send(state, collection(id)).await;
-            if status != StatusCode::ACCEPTED {
-                return (status, body);
-            }
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
-        panic!("migration never settled");
+    fn code_of(body: &bytes::Bytes) -> String {
+        serde_json::from_slice::<ErrorEnvelope>(body)
+            .expect("error envelope")
+            .error
+            .code
     }
 
     #[tokio::test]
-    async fn a_submitted_pcp_comes_back_decompressed() {
+    async fn a_pcp_comes_back_migrated_and_decompressed() {
         let state = state_with(Arc::new(EchoEnclave));
 
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, body) = settle(&state, id).await;
+        let (status, body) = send(&state, submission(gzip(PCP))).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.as_ref(), PCP);
     }
 
+    /// The second request arrives while the first is inside the enclave, which is the only
+    /// window in which the slot is held.
     #[tokio::test]
     async fn a_second_migration_is_refused_while_one_runs() {
-        let (enclave, gate) = GatedEnclave::new();
-        let state = state_with(Arc::new(enclave));
+        let (fake, entered, release) = GatedEnclave::new();
+        let state = state_with(Arc::new(fake));
 
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, _) = send(&state, submission(gzip(PCP))).await;
+        let first = tokio::spawn({
+            let state = state.clone();
+            async move { send(&state, submission(gzip(PCP))).await }
+        });
+        entered.notified().await;
 
+        let (status, body) = send(&state, submission(gzip(PCP))).await;
         assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(code_of(&body), "migration_in_progress");
 
-        gate.notify_one();
-        let (status, _) = settle(&state, id).await;
+        release.notify_one();
+        let (status, body) = first.await.expect("first request should finish");
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_ref(), PCP);
     }
 
-    #[tokio::test]
-    async fn a_running_migration_reports_accepted() {
-        let (enclave, gate) = GatedEnclave::new();
-        let state = state_with(Arc::new(enclave));
-
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, _) = send(&state, collection(id)).await;
-
-        assert_eq!(status, StatusCode::ACCEPTED);
-        gate.notify_one();
-    }
-
-    #[tokio::test]
-    async fn an_unknown_migration_is_not_found() {
-        let state = state_with(Arc::new(EchoEnclave));
-
-        let (status, _) = send(&state, collection(Uuid::new_v4())).await;
-
-        assert_eq!(status, StatusCode::NOT_FOUND);
-    }
-
-    /// A bad payload must not occupy the single slot — it is rejected before the claim.
+    /// A bad payload must not occupy the slot — it is rejected before the permit is taken.
     #[tokio::test]
     async fn an_uncompressed_payload_is_rejected_without_taking_the_slot() {
         let state = state_with(Arc::new(EchoEnclave));
@@ -275,9 +197,8 @@ mod tests {
         let (status, _) = send(&state, submission(PCP.to_vec())).await;
         assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
 
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, _) = settle(&state, id).await;
-        assert_eq!(status, StatusCode::OK);
+        let (status, _) = send(&state, submission(gzip(PCP))).await;
+        assert_eq!(status, StatusCode::OK, "the slot should still be free");
     }
 
     #[tokio::test]
@@ -305,25 +226,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unreachable_enclave_surfaces_on_collection() {
+    async fn an_unreachable_enclave_is_a_bad_gateway() {
         let state = state_with(Arc::new(FailingEnclave(enclave::Error::Transport(
             "connection refused".to_owned(),
         ))));
 
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, _) = settle(&state, id).await;
+        let (status, body) = send(&state, submission(gzip(PCP))).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(code_of(&body), "enclave_unreachable");
     }
 
+    /// The slot must be free again after a failure, or one dead enclave call wedges the host.
     #[tokio::test]
-    async fn an_enclave_timeout_surfaces_on_collection() {
+    async fn an_enclave_timeout_is_a_gateway_timeout_and_frees_the_slot() {
         let state = state_with(Arc::new(FailingEnclave(enclave::Error::Timeout)));
 
-        let id = submit_ok(&state, gzip(PCP)).await;
-        let (status, _) = settle(&state, id).await;
-
+        let (status, body) = send(&state, submission(gzip(PCP))).await;
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(code_of(&body), "enclave_timeout");
+
+        let (status, _) = send(&state, submission(gzip(PCP))).await;
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "not a 409");
     }
 
     /// The body limit and the decompression ceiling are the same number, and both answer 413,
@@ -340,7 +264,6 @@ mod tests {
         let (status, body) = send(&state, submission(bomb)).await;
 
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        let envelope: ErrorEnvelope = serde_json::from_slice(&body).expect("error envelope");
-        assert_eq!(envelope.error.code, "pcp_too_large");
+        assert_eq!(code_of(&body), "pcp_too_large");
     }
 }
