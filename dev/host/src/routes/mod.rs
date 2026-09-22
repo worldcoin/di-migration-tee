@@ -1,17 +1,27 @@
 //! HTTP route definitions.
 
 mod health;
+mod migrations;
 mod readiness;
 
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+    routing::{get, post},
+};
 
 use crate::AppState;
 
-/// Builds the router with all API routes.
-pub fn handler() -> Router<AppState> {
+/// Builds the router; the body limit hangs off the submit route alone.
+pub fn handler(max_request_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
         .route("/ready", get(readiness::handler))
+        .route(
+            "/v1/migrations",
+            post(migrations::submit).layer(DefaultBodyLimit::max(max_request_bytes)),
+        )
+        .route("/v1/migrations/{id}", get(migrations::collect))
 }
 
 #[cfg(test)]
@@ -32,7 +42,7 @@ mod tests {
     };
 
     async fn probe(state: &AppState, path: &str) -> StatusCode {
-        routes::handler()
+        routes::handler(1024 * 1024)
             .with_state(state.clone())
             .oneshot(
                 Request::builder()

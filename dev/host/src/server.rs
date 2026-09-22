@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
+use di_dev_api_types::MAX_PCP_BYTES;
 use telemetry_batteries::tracing::middleware::TraceLayer;
 use tokio::net::TcpListener;
 
@@ -26,7 +27,7 @@ pub async fn start(state: AppState) -> anyhow::Result<()> {
 
     axum::serve(
         listener,
-        routes::handler()
+        routes::handler(MAX_PCP_BYTES)
             .with_state(state)
             .layer(TraceLayer::new_for_axum())
             .into_make_service(),
