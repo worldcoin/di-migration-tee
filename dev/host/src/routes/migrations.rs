@@ -63,19 +63,8 @@ pub async fn submit(
         ));
     }
 
-    // CPU-bound and possibly tens of megabytes; on a runtime worker it would stall the host.
-    let pcp = tokio::task::spawn_blocking(move || compression::decompress(&body, MAX_PCP_BYTES))
-        .await
-        .map_err(|error| {
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                "Internal server error",
-                true,
-            )
-            .with_detail(format!("decompression task failed: {error}"))
-        })?
-        .map_err(|error| ApiError::payload(&error))?;
+    // Tens of milliseconds at this ceiling, so it runs inline rather than on the blocking pool.
+    let pcp = compression::decompress(&body, MAX_PCP_BYTES).map_err(|e| ApiError::payload(&e))?;
 
     // Claimed after decompression so a bad payload never occupies the slot.
     let Some(slot) = state.migrations().start() else {
@@ -253,7 +242,7 @@ mod tests {
 
         assert_eq!(status, StatusCode::CONFLICT);
 
-        gate.notify_waiters();
+        gate.notify_one();
         let (status, _) = settle(&state, id).await;
         assert_eq!(status, StatusCode::OK);
     }
@@ -267,7 +256,7 @@ mod tests {
         let (status, _) = send(&state, collection(id)).await;
 
         assert_eq!(status, StatusCode::ACCEPTED);
-        gate.notify_waiters();
+        gate.notify_one();
     }
 
     #[tokio::test]

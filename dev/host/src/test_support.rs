@@ -42,6 +42,9 @@ impl EnclaveClient for FailingEnclave {
 }
 
 /// Holds every migration open until released, so a test can observe one in flight.
+///
+/// Release with `notify_one`, not `notify_waiters`: the migration task may not be waiting yet,
+/// and only `notify_one` stores a permit for it.
 pub struct GatedEnclave {
     gate: Arc<Notify>,
 }
