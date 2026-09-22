@@ -9,7 +9,7 @@ use axum::{
 use di_dev_api_types::{ErrorBody, ErrorEnvelope};
 use di_dev_enclave_types as enclave_types;
 
-use crate::{compression, migrations::Failure};
+use crate::{compression, enclave};
 
 /// An API failure, with the status and body to return for it.
 #[derive(Debug)]
@@ -92,47 +92,27 @@ impl ApiError {
         }
     }
 
-    /// Maps a migration's recorded failure, on the collection route.
+    /// Maps an enclave failure on the migration route.
     #[must_use]
-    pub fn migration_failure(failure: &Failure) -> Self {
-        match failure {
-            Failure::EnclaveTimeout | Failure::EnclaveUnreachable(_) => {
-                Self::enclave_unreachable(failure)
-            }
-            Failure::EnclaveRejected(operation) => Self::enclave_rejected(*operation),
-            // The slot guard fired; the client just resubmits.
-            Failure::Abandoned => Self::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "migration_abandoned",
-                "The migration stopped without producing a result",
-                true,
-            ),
-        }
-    }
-
-    /// The migration never reached a working enclave.
-    fn enclave_unreachable(failure: &Failure) -> Self {
-        match failure {
-            Failure::EnclaveTimeout => Self::new(
+    pub fn enclave(error: &enclave::Error) -> Self {
+        match error {
+            enclave::Error::Timeout => Self::new(
                 StatusCode::GATEWAY_TIMEOUT,
                 "enclave_timeout",
                 "The enclave did not finish the migration in time",
                 true,
             ),
-            Failure::EnclaveUnreachable(detail) => Self::new(
+            enclave::Error::Transport(detail) => Self::new(
                 StatusCode::BAD_GATEWAY,
                 "enclave_unreachable",
                 "The enclave was unreachable",
                 true,
             )
             .with_detail(detail.clone()),
-            Failure::EnclaveRejected(_) | Failure::Abandoned => {
-                unreachable!("caller matched a transport failure")
-            }
+            enclave::Error::Operation(operation) => Self::enclave_rejected(*operation),
         }
     }
 
-    /// The enclave answered, with an error.
     fn enclave_rejected(operation: enclave_types::Error) -> Self {
         match operation {
             // The host rejects empty bodies first, so this means mismatched deploys.
@@ -194,7 +174,7 @@ mod tests {
     use di_dev_enclave_types as enclave_types;
 
     use super::ApiError;
-    use crate::{compression, migrations::Failure};
+    use crate::{compression, enclave};
 
     /// Pins the payload matrix; a retry loop on unchangeable bytes is what this guards.
     #[test]
@@ -227,46 +207,33 @@ mod tests {
         }
     }
 
-    /// Pins the failure matrix; nothing else fails if one arm is changed alone.
+    /// Pins the enclave matrix; nothing else fails if one arm is changed alone.
     #[test]
-    fn each_migration_failure_maps_to_its_own_status() {
+    fn each_enclave_failure_maps_to_its_own_status() {
         let cases = [
             (
-                Failure::EnclaveTimeout,
+                enclave::Error::Timeout,
                 StatusCode::GATEWAY_TIMEOUT,
                 "enclave_timeout",
-                true,
             ),
             (
-                Failure::EnclaveUnreachable("boom".to_owned()),
+                enclave::Error::Transport("boom".to_owned()),
                 StatusCode::BAD_GATEWAY,
                 "enclave_unreachable",
-                true,
             ),
             (
-                Failure::EnclaveRejected(enclave_types::Error::Internal),
+                enclave::Error::Operation(enclave_types::Error::Internal),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
-                true,
-            ),
-            (
-                Failure::Abandoned,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "migration_abandoned",
-                true,
             ),
         ];
 
-        for (failure, status, code, allow_retry) in cases {
-            let mapped = ApiError::migration_failure(&failure);
+        for (error, status, code) in cases {
+            let mapped = ApiError::enclave(&error);
 
-            assert_eq!(mapped.status(), status, "status for {failure:?}");
-            assert_eq!(mapped.code(), code, "code for {failure:?}");
-            assert_eq!(
-                mapped.allow_retry(),
-                allow_retry,
-                "retryability for {failure:?}"
-            );
+            assert_eq!(mapped.status(), status, "status for {error:?}");
+            assert_eq!(mapped.code(), code, "code for {error:?}");
+            assert!(mapped.allow_retry(), "{code} should be retryable");
         }
     }
 
@@ -274,7 +241,7 @@ mod tests {
     #[test]
     fn a_rejection_the_host_should_have_caught_is_not_retryable() {
         let operation = enclave_types::Error::EmptyPcp;
-        let mapped = ApiError::migration_failure(&Failure::EnclaveRejected(operation));
+        let mapped = ApiError::enclave(&enclave::Error::Operation(operation));
 
         assert_eq!(mapped.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(mapped.code(), "internal_error");
@@ -284,8 +251,7 @@ mod tests {
     /// The diagnosing arm's detail must not be overwritten by a generic one.
     #[test]
     fn a_limit_disagreement_keeps_its_diagnostic_detail() {
-        let mapped =
-            ApiError::migration_failure(&Failure::EnclaveRejected(enclave_types::Error::EmptyPcp));
+        let mapped = ApiError::enclave(&enclave::Error::Operation(enclave_types::Error::EmptyPcp));
 
         assert_eq!(
             mapped.detail.as_deref(),

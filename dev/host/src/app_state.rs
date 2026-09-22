@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
-use crate::{enclave::EnclaveClient, migrations::Store};
+use tokio::sync::Semaphore;
+
+use crate::enclave::EnclaveClient;
 
 /// Dependencies shared by API request handlers.
 #[derive(Clone)]
 pub struct AppState {
     enclave_client: Arc<dyn EnclaveClient>,
-    migrations: Arc<Store>,
+    migration: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -15,7 +17,7 @@ impl AppState {
     pub fn new(enclave_client: Arc<dyn EnclaveClient>) -> Self {
         Self {
             enclave_client,
-            migrations: Arc::new(Store::new()),
+            migration: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -25,9 +27,9 @@ impl AppState {
         Arc::clone(&self.enclave_client)
     }
 
-    /// Returns the migration slot and recent results.
+    /// The single migration slot; one enclave runs one pipeline at a time.
     #[must_use]
-    pub fn migrations(&self) -> Arc<Store> {
-        Arc::clone(&self.migrations)
+    pub fn migration(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.migration)
     }
 }

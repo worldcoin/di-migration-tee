@@ -38,4 +38,3 @@ tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "sig
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["serde", "v4"] }

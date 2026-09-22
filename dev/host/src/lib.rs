@@ -1,5 +1,5 @@
 //! HTTP host for the dev migration setup: takes a compressed PCP inline, relays it to the
-//! enclave and holds the result for collection. One migration at a time.
+//! enclave and returns the result. One migration at a time.
 
 #![deny(
     clippy::all,
@@ -16,7 +16,6 @@ mod test_support;
 pub mod compression;
 pub mod enclave;
 pub mod error;
-pub mod migrations;
 pub mod routes;
 pub mod server;
 
