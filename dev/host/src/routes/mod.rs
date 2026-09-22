@@ -12,6 +12,7 @@ use axum::{
 
 use crate::AppState;
 
+/// Builds the router; the body limit hangs off the submit route alone.
 pub fn handler(max_request_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
