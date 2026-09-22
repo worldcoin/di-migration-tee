@@ -63,7 +63,6 @@ pub async fn submit(
         ));
     }
 
-    // Tens of milliseconds at this ceiling, so it runs inline rather than on the blocking pool.
     let pcp = compression::decompress(&body, MAX_PCP_BYTES).map_err(|e| ApiError::payload(&e))?;
 
     // Claimed after decompression so a bad payload never occupies the slot.

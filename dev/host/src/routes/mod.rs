@@ -12,8 +12,6 @@ use axum::{
 
 use crate::AppState;
 
-/// Builds the router. The body limit hangs off the submit route alone; nothing else takes a
-/// body, so a router-wide limit would widen ingress for nothing.
 pub fn handler(max_request_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/health", get(health::handler))
