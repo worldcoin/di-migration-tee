@@ -25,6 +25,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 aws-config = "1"
 aws-sdk-dynamodb = "1"
+aws-sdk-sqs = "1"
 axum = "0.8"
 bytes = { version = "1", features = ["serde"] }
 di-dev-api-types = { path = "dev/api-types" }
