@@ -930,6 +930,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "migration-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "telemetry-batteries",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
