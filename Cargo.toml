@@ -24,8 +24,8 @@ publish = false
 anyhow = "1.0"
 async-trait = "0.1"
 aws-config = "1"
-aws-sdk-dynamodb = "1"
-aws-sdk-sqs = "1"
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 axum = "0.8"
 bytes = { version = "1", features = ["serde"] }
 di-dev-api-types = { path = "dev/api-types" }
