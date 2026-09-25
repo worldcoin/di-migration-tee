@@ -52,16 +52,12 @@ pub enum ConfigError {
     MissingSqsQueueUrl,
     #[error("SQS_QUEUE_URL must be an HTTP(S) URL with a queue path")]
     InvalidSqsQueueUrl,
-    #[error("{0} is required")]
-    MissingVar(&'static str),
-    #[error("PCP_BUCKET must be 3-63 lowercase letters, digits, hyphens, or dots")]
+    #[error("PCP_BUCKET is required and must be 3-63 lowercase letters, digits, hyphens, or dots")]
     InvalidPcpBucket,
     #[error(
         "PRESIGNED_URL_TTL_SECS must be a positive number of seconds, at most {MAX_PRESIGNED_URL_TTL_SECS}"
     )]
     InvalidPresignedUrlTtl,
-    #[error("ENCLAVE_ID must be 1-128 ASCII letters, digits, underscores, or hyphens")]
-    InvalidEnclaveId,
     #[error(
         "the migration enclave cannot attest yet; set STUB_ATTESTATION=true to serve an empty \
          attestation outside production"
@@ -98,7 +94,7 @@ impl Config {
         }
 
         if config.pcp_bucket.trim().is_empty() {
-            return Err(ConfigError::MissingVar("PCP_BUCKET"));
+            return Err(ConfigError::InvalidPcpBucket);
         }
         if !(3..=63).contains(&config.pcp_bucket.len())
             || !config.pcp_bucket.bytes().all(|byte| {
@@ -110,18 +106,6 @@ impl Config {
 
         if !(1..=MAX_PRESIGNED_URL_TTL_SECS).contains(&config.presigned_url_ttl.as_secs()) {
             return Err(ConfigError::InvalidPresignedUrlTtl);
-        }
-
-        if config.enclave_id.trim().is_empty() {
-            return Err(ConfigError::MissingVar("ENCLAVE_ID"));
-        }
-        if config.enclave_id.len() > 128
-            || !config
-                .enclave_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
-            return Err(ConfigError::InvalidEnclaveId);
         }
 
         if !config.stub_attestation {
