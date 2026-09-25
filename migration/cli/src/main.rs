@@ -10,7 +10,12 @@ use reqwest::Url;
 #[command(name = "migration-cli", version, about)]
 struct Cli {
     /// Base URL of the migration API.
-    #[arg(long, env = "API_URL", default_value = "http://127.0.0.1:8080", global = true)]
+    #[arg(
+        long,
+        env = "API_URL",
+        default_value = "http://127.0.0.1:8080",
+        global = true
+    )]
     api_url: Url,
 
     #[command(subcommand)]
