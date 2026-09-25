@@ -1,0 +1,21 @@
+services:
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,sqs,dynamodb
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          awslocal s3api head-bucket --bucket di-migration-pcp
+          && awslocal dynamodb describe-table --table-name di-migration
+          && awslocal sqs get-queue-url --queue-name di-migration
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
